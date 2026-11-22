@@ -18,6 +18,16 @@ function renderPage(page: TextPage, offset: number, toolName: string): string {
 }
 
 /**
+ * YouTube 429s auto-translated captions (timedtext `tlang=`) far more often than
+ * untranslated ones, and yt-dlp resolves a bare 'en' to a translation whenever a
+ * video carries several ASR tracks (e.g. `en` = bn→en while `en-orig` exists).
+ * Requesting `<lang>-orig` first avoids the translation endpoint.
+ */
+function captionLanguages(language: string): string[] {
+  return language.endsWith('-orig') ? [language] : [`${language}-orig`, language];
+}
+
+/**
  * Lists all available subtitles for a video.
  *
  * @param url - The URL of the video
@@ -113,23 +123,26 @@ export async function downloadSubtitles(
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), config.file.tempDirPrefix));
 
   try {
-    await _spawnPromise('yt-dlp', [
-      ...getGlobalArgs(config),
-      '--no-download-archive',
-      '--write-sub',
-      '--write-auto-sub',
-      '--sub-lang', language,
-      // Pin the output format: the .vtt filter below would otherwise miss the
-      // files whenever the user's config file sets --convert-subs.
-      '--convert-subs', 'vtt',
-      '--skip-download',
-      '--output', path.join(tempDir, '%(title)s.%(ext)s'),
-      ...getCookieArgs(config),
-      url
-    ]);
-
-    const subtitleFiles = fs.readdirSync(tempDir)
-      .filter(file => file.endsWith('.vtt'));
+    let subtitleFiles: string[] = [];
+    for (const lang of captionLanguages(language)) {
+      await _spawnPromise('yt-dlp', [
+        ...getGlobalArgs(config),
+        '--no-download-archive',
+        '--write-sub',
+        '--write-auto-sub',
+        '--sub-lang', lang,
+        // Pin the output format: the .vtt filter below would otherwise miss the
+        // files whenever the user's config file sets --convert-subs.
+        '--convert-subs', 'vtt',
+        '--skip-download',
+        '--output', path.join(tempDir, '%(title)s.%(ext)s'),
+        ...getCookieArgs(config),
+        url
+      ]);
+      subtitleFiles = fs.readdirSync(tempDir)
+        .filter(file => file.endsWith('.vtt'));
+      if (subtitleFiles.length > 0) break;
+    }
 
     if (subtitleFiles.length === 0) {
       throw new Error(`No subtitle files found for language '${language}'. Use ytdlp_list_subtitle_languages to check available options.`);
@@ -196,22 +209,26 @@ export async function downloadTranscript(
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), config.file.tempDirPrefix));
 
   try {
-    await _spawnPromise('yt-dlp', [
-      ...getGlobalArgs(config),
-      '--no-download-archive',
-      '--skip-download',
-      '--write-subs',
-      '--write-auto-subs',
-      '--sub-lang', language,
-      '--sub-format', 'ttml',
-      '--convert-subs', 'srt',
-      '--output', path.join(tempDir, 'transcript.%(ext)s'),
-      ...getCookieArgs(config),
-      url
-    ]);
-
-    const srtFiles = fs.readdirSync(tempDir)
-      .filter(file => file.endsWith('.srt'));
+    let srtFiles: string[] = [];
+    for (const lang of captionLanguages(language)) {
+      // No --write-subs: YouTube 429s the manual-subtitle endpoint from some
+      // networks and yt-dlp then aborts the whole call.
+      await _spawnPromise('yt-dlp', [
+        ...getGlobalArgs(config),
+        '--no-download-archive',
+        '--skip-download',
+        '--write-auto-subs',
+        '--sub-lang', lang,
+        '--sub-format', 'ttml',
+        '--convert-subs', 'srt',
+        '--output', path.join(tempDir, 'transcript.%(ext)s'),
+        ...getCookieArgs(config),
+        url
+      ]);
+      srtFiles = fs.readdirSync(tempDir)
+        .filter(file => file.endsWith('.srt'));
+      if (srtFiles.length > 0) break;
+    }
 
     if (srtFiles.length === 0) {
       throw new Error(`No subtitle files found for transcript generation in language '${language}'. Use ytdlp_list_subtitle_languages to check available options.`);
