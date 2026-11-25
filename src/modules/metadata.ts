@@ -303,11 +303,12 @@ export async function getVideoMetadataSummary(
     lines.push(`Duration: ${durationStr}`);
   }
   
-  if (metadata.view_count !== undefined) {
+  // != null: yt-dlp reports null (not a missing key) when a video hides its counts.
+  if (metadata.view_count != null) {
     lines.push(`Views: ${metadata.view_count.toLocaleString()}`);
   }
   
-  if (metadata.like_count !== undefined) {
+  if (metadata.like_count != null) {
     lines.push(`Likes: ${metadata.like_count.toLocaleString()}`);
   }
   
